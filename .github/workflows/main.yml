@@ -1,3 +1,4 @@
+# Darwin 27 fork build (registers this workflow on the fork)
 name: CI
 
 on:
