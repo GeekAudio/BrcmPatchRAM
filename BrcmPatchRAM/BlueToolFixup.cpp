@@ -195,7 +195,9 @@ static const uint8_t kBadChipsetCheckPatchedDarwin27[] =
 // the kext must load on every Darwin version and decide per binary at runtime.
 static constexpr KernelVersion kKernelVersionDarwin27 = static_cast<KernelVersion>(27);
 static constexpr KernelVersion kKernelVersionAnyMin = static_cast<KernelVersion>(0);
-static constexpr KernelVersion kKernelVersionAnyMax = static_cast<KernelVersion>(255);
+// KernelVersion has no fixed underlying type, so its representable range stops
+// at 31 and 255 is not a constant expression. A plain const is enough here.
+static const KernelVersion kKernelVersionAnyMax = static_cast<KernelVersion>(255);
 
 static bool shouldPatchBoardId = false;
 static bool shouldPatchAddress = false;
