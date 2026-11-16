@@ -161,6 +161,42 @@ static const uint8_t kBadChipsetCheckPatched15_4[] =
     0x90, 0x90
 };
 
+// Darwin 27 (macOS 27) rewrote bluetoothd. The vendor whitelist now accepts
+// Broadcom unconditionally (cmp edx, 0xA5C followed by an unconditional jmp),
+// so kVendorCheck no longer has a matching site. The chipset upper bound check
+// is still present but moved from ecx to eax and reads:
+//   call getChipsetID / cmp eax, 5000 / jb reject / cmp eax, 5999 / ja reject
+// Only the upper bound is patched, matching the upstream 15.4 behaviour.
+// The trailing jcc displacement is not compared (mask 0x00) because it shifts
+// between builds, but it must be part of the replacement so the two-byte jump
+// is removed as a unit instead of leaving an orphan displacement byte behind.
+static const uint8_t kBadChipsetCheckOriginalDarwin27[] =
+{
+    0x3D, 0x6F, 0x17, 0x00, 0x00, // cmp eax, 5999
+    0x77, 0x00                    // ja short (displacement ignored)
+};
+
+static const uint8_t kBadChipsetCheckMaskDarwin27[] =
+{
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0x00
+};
+
+static const uint8_t kBadChipsetCheckPatchedDarwin27[] =
+{
+    0x90, 0x90, 0x90, 0x90, 0x90,
+    0x90, 0x90
+};
+
+// Darwin 27 (macOS 27) rewrote bluetoothd. Comparing numerically keeps this
+// independent of Lilu's KernelVersion enum, which currently stops at Tahoe (25).
+// The plugin itself is deliberately not version-gated in either direction: the
+// OpenCore config injects BlueToolFixup.kext with empty MinKernel/MaxKernel, so
+// the kext must load on every Darwin version and decide per binary at runtime.
+static constexpr KernelVersion kKernelVersionDarwin27 = static_cast<KernelVersion>(27);
+static constexpr KernelVersion kKernelVersionAnyMin = static_cast<KernelVersion>(0);
+static constexpr KernelVersion kKernelVersionAnyMax = static_cast<KernelVersion>(255);
+
 static bool shouldPatchBoardId = false;
 static bool shouldPatchAddress = false;
 static bool shouldPatchNvramCheck = false;
@@ -224,11 +260,21 @@ static void patched_cs_validate_page(vnode_t vp, memory_object_t pager, memory_o
                 searchAndPatch(data, PAGE_SIZE, path, boardIdsWithUSBBluetooth[0], kBoardIdSize, BaseDeviceInfo::get().boardIdentifier, kBoardIdSize);
         }
         else if (strcmp(path + dirLength, "bluetoothd") == 0) {
-            searchAndPatch(data, PAGE_SIZE, path, kVendorCheckOriginal, kVendorCheckPatched);
-            searchAndPatch(data, PAGE_SIZE, path, kBadChipsetCheckOriginal, kBadChipsetCheckPatched);
+            const bool isDarwin27 = getKernelVersion() >= kKernelVersionDarwin27;
+
+            if (!isDarwin27) {
+                searchAndPatch(data, PAGE_SIZE, path, kVendorCheckOriginal, kVendorCheckPatched);
+                searchAndPatch(data, PAGE_SIZE, path, kBadChipsetCheckOriginal, kBadChipsetCheckPatched);
+            }
             if (getKernelVersion() >= KernelVersion::Ventura && getKernelVersion() < KernelVersion::Sequoia)
                 searchAndPatch(data, PAGE_SIZE, path, kBadChipsetCheckOriginal13_3, kBadChipsetCheckPatched13_3);
-            if (getKernelVersion() >= KernelVersion::Sequoia)
+            if (isDarwin27)
+                searchAndPatchWithMask(data, PAGE_SIZE, path,
+                    kBadChipsetCheckOriginalDarwin27, sizeof(kBadChipsetCheckOriginalDarwin27),
+                    kBadChipsetCheckMaskDarwin27, sizeof(kBadChipsetCheckMaskDarwin27),
+                    kBadChipsetCheckPatchedDarwin27, sizeof(kBadChipsetCheckPatchedDarwin27),
+                    nullptr, 0);
+            else if (getKernelVersion() >= KernelVersion::Sequoia)
                 searchAndPatch(data, PAGE_SIZE, path, kBadChipsetCheckOriginal15_4, kBadChipsetCheckPatched15_4);
             if (shouldPatchNvramCheck)
                 searchAndPatchWithMask(data, PAGE_SIZE, path, kSkipInternalControllerNVRAMCheck13_3, sizeof(kSkipInternalControllerNVRAMCheck13_3), kSkipInternalControllerNVRAMCheckMask13_3, sizeof(kSkipInternalControllerNVRAMCheckMask13_3), kSkipInternalControllerNVRAMCheckPatched13_3, sizeof(kSkipInternalControllerNVRAMCheckPatched13_3), nullptr, 0);
@@ -295,7 +341,7 @@ PluginConfiguration ADDPR(config) {
     arrsize(bootargDebug),
     bootargBeta,
     arrsize(bootargBeta),
-    KernelVersion::Monterey,
-    KernelVersion::Tahoe,
+    kKernelVersionAnyMin,
+    kKernelVersionAnyMax,
     pluginStart
 };
